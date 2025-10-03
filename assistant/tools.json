@@ -1,0 +1,93 @@
+[
+    {   
+        "type": "function",
+        "function": {
+            "name": "get_link",
+            "description": "Retrieve a link from a JSON database using a sequence of keys. The database can contain any category or nested structure of links.",
+            "strict": true,
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "keys": {
+                        "type": "array",
+                        "description": "A list of keys representing the path in the JSON structure to the desired link. Can be one or multiple keys for nested structures.",
+                        "items": {
+                            "type": "string"
+                        }   
+                    }
+                },
+                "required": ["keys"],
+                "additionalProperties": false
+            }
+        }
+    },
+    {   
+        "type": "function",
+        "function": {
+            "name": "save_user_phone",
+            "description": "Save user phone to DB",
+            "strict": true,
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "phone": {
+                        "type": "string",
+                        "description": "User telephone number"
+                    }
+                },
+                "required": ["phone"],
+                "additionalProperties": false
+            }
+        }
+    },
+    {   
+        "type": "function",
+        "function": {
+            "name": "save_user_name",
+            "description": "Save user name to DB",
+            "strict": true,
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "name": {
+                        "type": "string",
+                        "description": "User real name"
+                    }
+                },
+                "required": ["name"],
+                "additionalProperties": false
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "process_user_agreement",
+            "description": "Records the summary, and sends it to the CRM",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "summary": {
+                        "type": "string",
+                        "description": "Brief description of the conversation"
+                    }
+                },
+                "required": ["summary"]
+            }
+        }
+    },
+    {   
+        "type": "function",
+        "function": {
+            "name": "ban_user",
+            "description": "Block the current user in the database",
+            "strict": true,
+            "parameters": {
+                "type": "object",
+                "properties": {},
+                "required": [],
+                "additionalProperties": false
+            }
+        }
+    }
+]
