@@ -15,10 +15,7 @@ from pyrogram.types import User as PyroUser
 from typing import TYPE_CHECKING
 import random
 
-if TYPE_CHECKING:
-    from .users import User
-
-config=Config(RepositoryEnv('/home/appuser/Seller/.env'))
+config=Config(RepositoryEnv('/home/appuser/Bot/.env'))
 
 
 class Executor(Base):
@@ -86,31 +83,6 @@ class ExecutorsRepo(BaseRepo):
             print(f"Unknown mode: {mode!r}. Use 'sequential' or 'random'.")
             return self.PROXY_MIN
 
-
-    # async def connect_executor(self, *, executor_id: int = None, name: str = None) -> Client:
-    #     """
-    #     Возвращает pyrogram.Client
-    #     """
-    #     cond = self._where_one_of(executor_id=executor_id, name=name)
-    #     row = await self.session.scalar(select(self.model).where(cond))
-    #     if not row:
-    #         print("Исполнитель не найден")
-
-    #     bot = Client(
-    #         name=row.name,
-    #         api_id=row.api_id,
-    #         api_hash=row.api_hash,
-    #         session_string=row.session_string,
-    #         proxy={
-    #             "scheme": row.proxy_type,
-    #             "hostname": row.proxy_ip,
-    #             "port": row.proxy_port,
-    #             "username": row.proxy_user,
-    #             "password": row.proxy_pass,
-    #         }
-    #     )
-    #     return bot
-
     # ===========================
     # CRUD
     # ===========================
@@ -147,20 +119,16 @@ class ExecutorsRepo(BaseRepo):
         await self.session.refresh(obj)
         return int(obj.executor_id)
 
-        # if not kwargs.get("session_string"):
-            
-
-        # if not kwargs.get("executor_id"):
-        #     bot = await self.connect_executor(name=kwargs["name"])
-        #     async with bot:
-        #         me = await bot.get_me()
-        #     await self.update_param(key='name', target=kwargs["name"], column='executor_id', value=me.id)
-        #     await self.update_param(key='name', target=kwargs["name"], column='phone', value=me.phone_number)
-        # return int(obj.executor_id)
-
 
     async def delete_executor(self, *, executor_id=None, name=None) -> bool:
-        return (await self.delete_by_one_of(executor_id=executor_id, name=name)) > 0
+        if executor_id is None and name is not None:
+            q = select(self.model.executor_id).where(self.model.name == name).limit(1)
+            executor_id = await self.session.scalar(q)
+            if executor_id is None:
+                return False
+
+        await self.ban_users_of_executor(executor_id)
+        return (await self.delete_by_one_of(executor_id=executor_id)) > 0
 
     # ===========================
     # Queries
@@ -212,6 +180,7 @@ class ExecutorsRepo(BaseRepo):
             .values(active_users=Executor.active_users + 1, users=Executor.users + 1)
         )
         res = await self.session.execute(stmt)
+        await self.session.commit()
         return bool(res.rowcount and res.rowcount > 0)
 
     # симметричное уменьшение
@@ -222,3 +191,20 @@ class ExecutorsRepo(BaseRepo):
             .values(active_users=Executor.active_users - 1, users=Executor.users - 1)
         )
         await self.session.execute(stmt)
+        await self.session.commit()
+
+
+    async def ban_users_of_executor(self, executor_id: int) -> int:
+        """
+        Помечает всех пользователей этого исполнителя как забаненных
+        и проставляет executor_id=0. Возвращает количество обновлённых строк.
+        """
+        from .users import User
+        stmt = (
+            update(User)
+            .where(User.executor_id == executor_id)
+            .values(banned=True, executor_id=0)
+        )
+        res = await self.session.execute(stmt)
+        await self.session.commit()
+        return res.rowcount or 0

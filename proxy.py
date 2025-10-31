@@ -87,6 +87,26 @@ def proxy_request(
     # safety fallback
     return False, last_exc
 
+
+def check(port):
+    ok, res = proxy_request(
+        "GET",
+        "http://checkip.amazonaws.com/",
+        proxy_hostport=f"5.161.202.98:{port}",        # ТУТ МЕНЯЕМ +1 ДЛЯ КАЖДОГО НОВОГО АККА 
+        user="976596d2d843ce431783__cr.ru;anon.1",
+        password="7e5fcac4696d2070",
+        use_header_auth=False,   # попробуйте True/False в зависимости от прокси
+        timeout=(5,8),
+        max_retries=1
+    )
+    if ok:
+        print("status:", res.status_code, "elapsed:", getattr(res,"elapsed_seconds",None))
+        print("body:", res.text.strip())
+    else:
+        print("Error:", res)
+
+
+
 # ------------------ Примеры использования ------------------
 
 if __name__ == "__main__":
@@ -94,7 +114,7 @@ if __name__ == "__main__":
     ok, res = proxy_request(
         "GET",
         "http://checkip.amazonaws.com/",
-        proxy_hostport="5.161.202.98:10001",        # ТУТ МЕНЯЕМ +1 ДЛЯ КАЖДОГО НОВОГО АККА 
+        proxy_hostport="5.161.202.98:11427",        # ТУТ МЕНЯЕМ +1 ДЛЯ КАЖДОГО НОВОГО АККА 
         user="976596d2d843ce431783__cr.ru;anon.1",
         password="7e5fcac4696d2070",
         use_header_auth=False,   # попробуйте True/False в зависимости от прокси

@@ -1,5 +1,5 @@
 from sqlalchemy import (
-    Column, Integer, String, Text, Boolean, ForeignKey, UniqueConstraint, select, update, case
+    Column, Integer, String, Text, Boolean, ForeignKey, UniqueConstraint, select, update, case, text
 )
 from sqlalchemy.orm import declarative_base, relationship
 from pyrogram import Client, types
@@ -12,8 +12,16 @@ import time
 
 from typing import TYPE_CHECKING
 
-if TYPE_CHECKING:
-    from .users import User
+import logging
+import re
+import asyncio
+import time
+from pyrogram import Client, errors
+from pyrogram.raw.types import InputPeerUser, InputChannel, Message
+from pyrogram.raw.functions.messages import GetDiscussionMessage
+from pyrogram.raw.functions.channels import GetParticipant, GetFullChannel
+from sqlalchemy import select, update
+from .executors import Executor
 
 
 class User(Base):
@@ -24,11 +32,12 @@ class User(Base):
     access_hash    = Column(Integer)
     username       = Column(String, unique=True)
     phone          = Column(String)
+    name           = Column(String)
     contact        = Column(Boolean, default=False)
     banned         = Column(Boolean, default=False)
     crm            = Column(Boolean, default=False)
-    thread_id      = Column(String)
-    info           = Column(Text)
+    conversation   = Column(String)
+    info           = Column(Text, default="")
     summary        = Column(Text)
     last_message   = Column(Integer, default=time.time)
     problems_count = Column(Integer, default=0)
@@ -43,39 +52,20 @@ class UsersRepo(BaseRepo):
         super().__init__(session, User)
         self.execs = ExecutorsRepo(session)
         
-    
-    async def get_id_by_username(self, bot: Client, username: str) -> int:   # TODO УДАЛИТЬ
-        """
-        Возвращает id по username
-        """
-        try:
-            user = await bot.get_users(username)
-            return user.id if user and user.id > 100 else None
-        except Exception:
-            return None
-        
     # ===========================
     # CRUD
     # ===========================
-    async def add_user(self, *, user_id: int, executor_id: int = None,
-                       access_hash: int = None, thread_id: int = 0, username: str = None,
-                       phone: str = None, info: str = None, **kwargs) -> int:
+
+    async def add_user(self, **kwargs) -> int:
         """
         Чистая вставка пользователя в БД.
         """
+        user_id = kwargs['user_id']
+
         if await self.exists_by(user_id=user_id):
             return int(await self.get_param(key='user_id', target=user_id, column='user_id'))
 
-        obj = self.model(
-            user_id=user_id,
-            executor_id=executor_id,
-            access_hash=access_hash,
-            thread_id=thread_id,
-            username=username,
-            phone=phone,
-            info=info or "",
-            **{k: v for k, v in kwargs.items() if k in self._columns}
-        )
+        obj = self.model(**{k: v for k, v in kwargs.items() if k in self._columns})
         self.session.add(obj)
         try:
             await self.session.commit()
@@ -87,98 +77,38 @@ class UsersRepo(BaseRepo):
             if existing:
                 return int(existing)
             raise
-
-    # async def add_user(self, user_id: int, 
-    #                    executor_id: int = None, 
-    #                    access_hash: int = None, 
-    #                    info: str = None, **kwargs) -> int:
-    #     """
-    #     Добавляет пользователя. Если executor не указан, назначается автоматически.
-    #     Возвращает user_id.
-    #     """
-    #     exists = await self.session.scalar(select(self.model.user_id).where(self.model.user_id == user_id))
-    #     if exists:
-    #         return exists
-        
-    #     user = self.model(
-    #         user_id     = user_id,
-    #         executor_id = executor_id,
-    #         access_hash = access_hash,
-    #         thread_id   = 0, #get_or_create_thread(user_id),
-    #         **kwargs,
-    #     )
-
-    #     self.session.add(user)
-    #     await self.session.flush() 
-
-    #     assigned_executor_id = await self.assign_executor(user_id, executor_id)
-
-    #     if executor_id is not None and executor_id != assigned_executor_id:
-    #         print("Запрашиваемый и назначенный исполнители не совпали. Пользователь не добавлен")
-    #         await self.delete_user(user_id=user_id)
-    #         return
-    #     else:
-    #         executor_id = assigned_executor_id
-
-    #     bot = await self.execs.connect_executor(executor_id=executor_id)
-
-    #     async with bot:
-    #         username = await self.get_username_by_id(bot, user_id, access_hash)
-    #         phone = await self.get_phone_by_id(bot, user_id, access_hash)
-
-    #     user.executor_id = executor_id
-    #     user.username = username
-    #     user.phone = phone
-    #     user.info = (info or "") + (f"\n\nTG phone NUMBER: {phone}" if phone else "")
-
-    #     await self.session.commit()
-    #     await self.session.refresh(user)
-    #     return user.user_id
-    
-
-    async def add_user_by_name(self, bot: Client, username: str, 
-                               executor_id: int = None, 
-                               info: str = None, **kwargs) -> int:
-        """
-        Добавляет или обновляет пользователя по username. Если executor не указан, назначается автоматически.
-        Возвращает user_id.
-        """
-        exists = await self.session.scalar(select(self.model.username).where(self.model.username == username))
-        if exists:
-            return exists
-        
-        user_id = await self.get_id_by_username(bot, username)
-        if user_id is None:
-            return None
-        phone = await self.get_phone_by_id(bot, user_id)
-        
-        user = self.model(
-            user_id     = user_id,
-            executor_id = None,
-            username    = username,
-            phone       = phone,
-            thread_id   = 0,#get_or_create_thread(user_id),
-            info        = (info or "") + (f"\n\nTG phone NUBMER: {phone}" if phone else ""),
-            **kwargs,
-        )
-
-        self.session.add(user)
-        await self.session.flush() 
-
-        await self.assign_executor(user.user_id, executor_id)
-        
-        await self.session.commit()
-        await self.session.refresh(user)
-        return user.user_id
     
     
     async def delete_user(self, *, user_id: int = None, username: str = None) -> bool:
+        await self.unassign_executor(user_id)
         return (await self.delete_by_one_of(user_id=user_id, username=username)) > 0
 
 
     async def delete_user_by_name(self, username: str) -> bool:
         return (await self.delete_by_one_of(username=username)) > 0
-    
+
+
+    async def delete_all_users(self) -> int:
+        """
+        Удаляет всех пользователей из таблицы users с отвязкой исполнителей.
+        Возвращает количество удалённых записей.
+        """
+        stmt = select(self.model.user_id)
+        res = await self.session.execute(stmt)
+        user_ids = [uid for (uid,) in res.all()]
+
+        count = 0
+        for uid in user_ids:
+            try:
+                ok = await self.delete_user(user_id=uid)
+                if ok:
+                    count += 1
+            except Exception as e:
+                print(f"[UsersRepo] Ошибка при удалении user_id={uid}: {e}")
+
+        print(f"[UsersRepo] Удалено {count} пользователей (через delete_user).")
+        return count
+
 
     async def forget_user(self, user_id: int) -> None:
         """
@@ -192,10 +122,10 @@ class UsersRepo(BaseRepo):
                 contact=False,
                 banned=False,
                 crm=False,
-                thread_id=None,
+                conversation=None,
                 summary=None,
                 last_message=int(time.time()),
-                greet_seq=0,
+                problems_count=0,
             )
         )
         await self.session.execute(stmt)
@@ -203,7 +133,7 @@ class UsersRepo(BaseRepo):
 
     
     async def update_user_param(self, user_id: int, column: str, value):
-        self.update_param('user_id', target=user_id, column=column, value=value)
+        await self.update_param(key='user_id', target=user_id, column=column, value=value)
 
     
     async def rotate_user_down(self, user_id: int) -> None:
@@ -213,7 +143,7 @@ class UsersRepo(BaseRepo):
             .values(
                 problems_count=self.model.problems_count + 1,
                 problem=case(
-                    (self.model.problems_count + 1 >= 10, True),
+                    (self.model.problems_count + 1 >= 5, True),
                     else_=self.model.problem
                 )
             )
@@ -258,10 +188,12 @@ class UsersRepo(BaseRepo):
     async def get_user_param(self, user_id: int, column: str):
         return await self.get_param(key='user_id', target=user_id, column=column)
 
-
-    async def get_users_without_contact(self, limit: int = 100) -> list[tuple[int, int, int]]:
+    
+    async def pop_users_to_greet(self, limit: int = 100) -> list[tuple[int, int, int]]:
         """
-        Возвращает список (user_id, executor_id, access_hash), у которых contact = False и access_hash непустой
+        Возвращает до `limit` пользователей на приветствие в формате
+        (user_id, executor_id, access_hash), причём у каждого пользователя
+        уникальный executor_id (не более одного пользователя на одного исполнителя).
         """
         stmt = (
             select(self.model.user_id, self.model.executor_id, self.model.access_hash)
@@ -269,21 +201,25 @@ class UsersRepo(BaseRepo):
                 self.model.contact.is_(False),
                 self.model.problem.is_(False),
                 self.model.access_hash.is_not(None),
+                self.model.executor_id.is_not(None),
             )
             .order_by(self.model.problems_count.asc(), self.model.user_id.asc())
-            .limit(limit)
         )
         res = await self.session.execute(stmt)
-        return [(uid, eid, ah) for (uid, eid, ah) in res.all()]
 
+        picked: list[tuple[int, int, int]] = []
+        seen_execs: set[int] = set()
 
-    async def pop_first_user_to_greet(self) -> tuple[int, int, int]:
-        """
-        Получает первого пользователя в списке на приветствие, выдает (user_id, executor_id, access_hash)
-        """
-        users = await self.get_users_without_contact(limit=1)
-        return users[0] if users else None
-    
+        for uid, eid, ah in res.all():
+            if eid in seen_execs:
+                continue
+            picked.append((uid, eid, ah))
+            seen_execs.add(eid)
+            if len(picked) >= limit:
+                break
+
+        return picked
+
 
     async def get_inactive_users(self, interval_seconds: int) -> list[User]:
         """

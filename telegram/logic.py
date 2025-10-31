@@ -1,7 +1,6 @@
 from db_modules.controller import DatabaseController
 import asyncio
 import time
-import state
 import random
 import json
 from .senders import*
@@ -9,16 +8,15 @@ from pyrogram import Client
 from pyrogram import filters
 from pyrogram.types import Message
 from pyrogram.enums import ChatAction
-from pyrogram.handlers import MessageHandler
 from pyrogram.types import User as PyroUser
 from pyrogram.raw.types import User as RawUser
 # from assistant.gpt import get_assistant_response_
 from db_modules.controller import DatabaseController
 from telegram.botpool import BotPool
-from settings import get
+from assistant.gpt import Assistant
 
 
-def make_handlers(db: DatabaseController, pool: BotPool, state):
+def build_logic(pool: BotPool, db: DatabaseController, assistant: Assistant, state, settings):
 
     async def handle_message(bot: Client, message: Message):
         """
@@ -62,7 +60,6 @@ def make_handlers(db: DatabaseController, pool: BotPool, state):
         state.user_tasks[uid] = asyncio.create_task(handle_user_buffer(bot, user))
 
 
-
     async def handle_user_buffer(bot: Client, user: PyroUser | RawUser):
         """
         Копит входящие, имитирует печать, отдаёт в ассистент, отвечает тем же client.
@@ -89,7 +86,7 @@ def make_handlers(db: DatabaseController, pool: BotPool, state):
             # Ожидание нескольких сообщений подряд
             while True:
                 await asyncio.sleep(1)
-                if state.last_gap(uid) >= get('BUFFER_TIME'):
+                if state.last_gap(uid) >= settings.get('BUFFER_TIME'):
                     break
             try:
                 await bot.read_chat_history(uid)
@@ -97,13 +94,13 @@ def make_handlers(db: DatabaseController, pool: BotPool, state):
                 pass
 
             combined_input = state.pop_buffer(uid)
-            await asyncio.sleep(random.randint(0, get('DELAY')))   # "В сети"
+            await asyncio.sleep(random.randint(0, settings.get('DELAY')))   # "В сети"
 
             typing_task = asyncio.create_task(typing_loop())
             await handle_assistant_response(bot, user, combined_input)
 
         except asyncio.CancelledError:
-            pass  # Если задача отменена — просто выходим
+            pass
         finally:
             typing_active = False
             if typing_task:
@@ -113,44 +110,52 @@ def make_handlers(db: DatabaseController, pool: BotPool, state):
                 except asyncio.CancelledError:
                     pass
     
-    async def handle_assistant_response(bot: Client, user: PyroUser | RawUser, message, wait_after=True, first=True):
-        await pool.send_text(bot=bot, user_id=user.id, text=message, first=first)
-        if wait_after:
-            reset_inactivity_timer(bot, user, first)
-
-
-
-    # async def handle_assistant_response(bot: Client, user: PyroUser | RawUser, message, wait_after=True, first=False):
-    #     """
-    #     Вызывает и обрабатывает ответ ассистента. Посылает ответ.
-    #     """
-    #     loop = asyncio.get_event_loop()
-    #     response = await loop.run_in_executor(None, lambda: get_assistant_response_(message, user))
-
-    #     data = json.loads(response)
-    #     answer = data['answer']
-    #     send_msg = data['send'] 
-    #     send_pdf = data['file']
-    #     need_wait = data['wait']
-    #     reply_id = data['reply']
-
-    #     await asyncio.sleep(min(len(answer) * get('TYPING_DELAY'), 10.0))
-
-    #     if send_msg:
-    #         await pool.send_text(bot=bot, user_id=user.id, text=answer, reply_to=reply_id, first=first)
-        
-    #     if send_pdf:
-    #         file_path = f"data/catalog.pdf"
-    #         await pool.send_document(bot=bot, user_id=user.id, path=file_path, caption=answer, first=first)
-
-    #     if need_wait and wait_after:
+    # async def handle_assistant_response(bot: Client, user: PyroUser | RawUser, message, wait_after=True, first=True):
+    #     await pool.send_text(bot=bot, user_id=user.id, text=message, first=first)
+    #     if wait_after:
     #         reset_inactivity_timer(bot, user, first)
 
+
+    async def handle_assistant_response(bot: Client, user: PyroUser | RawUser, message: str, wait_after=True, first=False) -> bool:
+        """
+        Вызывает и обрабатывает ответ ассистента. Посылает ответ.
+        """
+        response = await assistant.get_assistant_response(message, user.id)
+        response = response.output_text
+
+        data = json.loads(response)
+        answer = data['answer']
+        send_msg = data['send'] 
+        send_pdf = data['file']
+        need_wait = data['wait']
+        reply_id = data['reply']
+
+        await asyncio.sleep(min(len(answer) * settings.get('TYPING_DELAY'), 10.0))
+
+        ok = False
+
+        try:
+            if send_msg:
+                ok = await pool.send_text(bot=bot, user_id=user.id, text=answer, reply_to=reply_id, first=first)
+            
+            if send_pdf:
+                file_path = f"data/catalog.pdf"
+                ok = await pool.send_document(bot=bot, user_id=user.id, path=file_path, caption='', first=first)
+
+            if need_wait and wait_after:
+                reset_inactivity_timer(bot, user, first)
+        
+        except Exception as e:
+            print(f"[handle_assistant_response] {e}")
+            await db.rotate_user_down(user.id)
+            return False
+        
+        return ok
 
 
     async def inactivity_push(bot: Client, user: PyroUser | RawUser, first: bool):
         try:
-            await asyncio.sleep(get('INACTIVITY_TIMEOUT'))
+            await asyncio.sleep(settings.get('INACTIVITY_TIMEOUT'))
             await handle_assistant_response(
                 bot, user, "SYSTEM: Клиент долго не отвечает, напиши ему еще раз",
                 wait_after=False, first=first
@@ -159,7 +164,6 @@ def make_handlers(db: DatabaseController, pool: BotPool, state):
             pass
         finally:
             state.cancel_inactivity_task(user.id)
-
 
 
     def reset_inactivity_timer(bot: Client, user: PyroUser | RawUser, first: bool):
@@ -171,4 +175,7 @@ def make_handlers(db: DatabaseController, pool: BotPool, state):
         state.set_inactivity_task(user.id, task)
 
 
-    return {"handle_message": handle_message}
+    return {
+        "handle_message": handle_message,
+        "handle_assistant_response": handle_assistant_response
+        }

@@ -11,7 +11,7 @@ hash = config('CRM_HASH')
 referer = config('CRM_REFERER')
 
 
-def send_to_crm(name: str, phone: str, note: str, telegram: str):
+def send_to_crm(name: str, phone: str, note: str, telegram: str) -> bool:
     try:
         data = {
             "fields[name_1]": name,

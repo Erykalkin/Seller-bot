@@ -17,14 +17,15 @@ async def send_message(bot: Client, user: PyroUser | RawUser, text: str = "", re
             await bot.invoke(functions.messages.SendMessage(peer=input_user, message=text, random_id=bot.rnd_id()))
             return True
         except Exception as e:
-            print(f"[send_message:raw] failed: {e}")
-
+            print(f"[send_message raw] failed: {e}")
+            raise
     else:
         try:
             await bot.send_message(chat_id=user.id, text=text, reply_to_message_id=reply)
             return True
         except Exception as e:
             print(f"[send_message] failed: {e}")
+            raise
     return False
         
 
@@ -57,14 +58,16 @@ async def send_document(bot: Client, user: PyroUser | RawUser, path: str, captio
             )
             return True
         except Exception as e:
-            print(f"[send_document:raw] failed: {e}")
+            print(f"[send_document raw] failed: {e}")
+            raise
     else:
         try:
             await bot.send_document(chat_id=user.id, document=path, caption=caption)
             return True
         except Exception as e:
             print(f"[send_document] failed: {e}")
-            return False
+            raise
+    return False
 
 
 

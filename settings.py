@@ -19,6 +19,7 @@ _DEFAULTS: Dict[str, Any] = {
     "TIMEZONE": "Europe/Moscow",
     "MORNING": 9,
     "NIGHT": 21,
+    "SECOND_GREET": True,
 }
 _TYPES: Dict[str, type] = {
     "BUFFER_TIME": float,
@@ -31,6 +32,7 @@ _TYPES: Dict[str, type] = {
     "TIMEZONE": str,
     "MORNING": int,
     "NIGHT": int,
+    "SECOND_GREET": bool,
 }
 
 # ---- Состояние ----
